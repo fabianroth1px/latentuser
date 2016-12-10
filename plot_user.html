@@ -1,0 +1,89 @@
+<!doctype html>
+<html>
+<head>
+<title>Scatterplot of JSON data</title>
+<script src="https://d3js.org/d3.v4.min.js"></script>
+
+<script type="text/javascript">
+
+function url2color(url) {
+	var dd = url.split(".");
+	var tld = dd[dd.length - 1];
+	var colors = {};
+	colors['ch'] = "red";
+	colors['fr'] = "blue";
+	colors['it'] = "green";
+	if (tld in colors) {
+		return colors[tld]
+	} else {
+		return "black"
+	}
+}
+
+function draw(inp) {
+  "use strict";
+  // add the tooltip area to the webpage
+  var tooltip = d3.select("body").append("div")
+     .attr("class", "tooltip")
+     .style("opacity", 0);
+
+
+	var data=inp.users
+
+  var w=800, h=400;
+  var pad = {left: 20, right: 20, top: 20, bottom: 20};
+
+  var svg = d3.select("body")
+                .append("svg")
+                  .attr("height", h)
+                  .attr("width", w);
+
+  svg.append("rect")
+       .attr("x", pad.left).attr("y",pad.top)
+       .attr("width", w-(pad.left+pad.right))
+       .attr("height",h-(pad.top+pad.bottom))
+       .attr("stroke", "black")
+       .attr("fill", "rgb(230,230,230)");
+
+  var xMin = d3.min(data, function(d) { return Number(d.v[0]); });
+  var xMax = d3.max(data, function(d) { return Number(d.v[0]); });
+  var yMin = d3.min(data, function(d) { return Number(d.v[1]); });
+  var yMax = d3.max(data, function(d) { return Number(d.v[1]); });
+
+  var xScale = d3.scaleLinear().domain([xMin, xMax]).range([pad.left*2, w-pad.right*2]);
+  var yScale = d3.scaleLinear().domain([yMin, yMax]).range([h-pad.bottom*2, pad.top*2]);
+
+  var circles = svg.selectAll("circle")
+                      .data(data)
+                      .enter()
+//												.filter(function(d) { return d.len > 20 })
+                        .append("circle")
+                          .attr("cx", function(d) { return xScale(d.v[0]); })
+                          .attr("cy", function(d) { return yScale(d.v[1]); })
+                          .attr("r", 5)
+                          .attr("opacity", 0.8)
+													.attr("fill", function(d) { return url2color(d.id); })
+												.append("svg:title")
+  										  .text(function(d) { return d.id; })
+.on("mouseover", function(d) {
+         tooltip.transition()
+            .duration(50)
+            .style("opacity", .9);
+         tooltip.html("Message with " + d.id)
+            .style("left", (d3.event.pageX + 5) + "px")
+            .style("top", (d3.event.pageY - 28) + "px");
+      })
+      .on("mouseout", function(d) {
+         tooltip.transition()
+            .duration(50)
+            .style("opacity", 0);
+      });
+}
+</script>
+</head>
+<body>
+<script type="text/javascript">
+  d3.json("dump.json", draw);
+</script>
+</body>
+</html>
