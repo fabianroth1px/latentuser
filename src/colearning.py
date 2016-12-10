@@ -6,13 +6,13 @@ import collections
 import json
 import sets
 
-USER_DIM=2
-ITEM_DIM=2
-HIDDEN = 1
+USER_DIM=1
+ITEM_DIM=1
+HIDDEN = 3
 ETA = 0.1
-NOISE = 0.01
+NOISE = 0.0
 STEPS_MINI_OPT = 500
-STEPS_MINI_OPT_W = 1
+STEPS_MINI_OPT_W = 50
 RESTRICT_ITEMS_PER_USER = 0
 RESTRICT_USERS_PER_ITEM = 0
 #RESTRICT_ITEMS_PER_USER = 15
@@ -71,7 +71,6 @@ class Colearner:
 		for n in range(self.steps_mini_opt):
 			grad_f_i = self.sess.run(self.item_grad, feed_dict = {
 				self.f_i: curr_f_i, self.f_u: f_us, self.labels: out})
-#				self.f_i: curr_f_i * np.ones([len(f_us), 1]), self.f_u: f_us, self.labels: out})
 			curr_f_i = curr_f_i - self.eta * grad_f_i
 
 		lpost=self.sess.run(self.loss, feed_dict = {
@@ -79,7 +78,7 @@ class Colearner:
 
 		return curr_f_i, lpre, lpost
 
-	def trainUser(self, f_u, f_is, out): 
+	def trainUser(self, f_u, f_is, out, debug): 
 		if np.random.uniform(0, 1) < self.noise:
 			curr_f_u = np.random.randn(1, self.user_dim)
 		else:
@@ -89,18 +88,30 @@ class Colearner:
 		for n in range(self.steps_mini_opt):
 			grad_f_u = self.sess.run(self.user_grad, feed_dict = {
 				self.f_u: curr_f_u, self.f_i: f_is, self.labels: out})
-#				self.f_u: curr_f_u * np.ones([len(f_is), 1]), self.f_i: f_is, self.labels: out})
 			curr_f_u = curr_f_u - self.eta * grad_f_u
 
 		lpost=self.sess.run(self.loss, feed_dict = {
 			self.f_u: curr_f_u, self.f_i: f_is, self.labels: out})
+		if debug:
+			print "f_u"
+			print f_u
+			print "f_is"
+			print f_is
+			print "out"
+			print out
+			print "lout"
+			lout = self.sess.run(self.out, feed_dict = {
+				self.f_u: curr_f_u, self.f_i: f_is, self.labels: out})
+			print lout
+			print "loss"
+			print lpost
+
 
 		return curr_f_u, lpre, lpost
 
 	def trainW(self, f_us, f_is, out):
 		lpre=self.sess.run(self.loss, feed_dict = {
 			self.f_u: f_us, self.f_i: f_is, self.labels: out})
-#		for n in range(self.steps_mini_opt):
 		for n in range(self.steps_mini_opt_w):
 			self.sess.run(self.w_grad_optimizer, feed_dict = {
 				self.f_u: f_us, self.f_i: f_is, self.labels: out})
@@ -255,12 +266,14 @@ class UserItemStore:
 		j = 0
 		for _, i in self.items.iteritems():
 			n_users = len(i.users)
+			n_neg = n_users / 2
 			for _,user in enumerate(i.users):
-				f_us[j, :] = self.users[user].f_u.flatten()
+#				f_us[j, :] = self.users[user].f_u.flatten()
+				f_us[j, :] = self.users[user].f_u
 				f_is[j, :] = i.f_i
 				j+=1
 			non_users = self.users_set.difference(i.users)
-			neg_samples = random.sample(non_users, n_users)
+			neg_samples = random.sample(non_users, n_neg)
 			for _,s in enumerate(neg_samples):
 				f_us[j, :] = self.users[s].f_u
 				f_is[j, :] = i.f_i
@@ -325,7 +338,7 @@ class UserItemStore:
 json_filename = "dump.json"
 
 #us = UserItemStore("/home/ubuntu/data/part*", USER_DIM, ITEM_DIM, RESTRICT_USERS_PER_ITEM, RESTRICT_ITEMS_PER_USER)
-us = UserItemStore("/Users/fabianroth/1X/colearning/testdata/*", USER_DIM, ITEM_DIM, RESTRICT_USERS_PER_ITEM, RESTRICT_ITEMS_PER_USER)
+us = UserItemStore("testdata/*", USER_DIM, ITEM_DIM, RESTRICT_USERS_PER_ITEM, RESTRICT_ITEMS_PER_USER)
 us.showSomeUsers()
 
 sess = tf.InteractiveSession()
@@ -362,7 +375,11 @@ for step in range(1000000):
 	llpost = 0
 	n = 0
 	for uid, f_u, f_is, out in us.getUsersItems():
-		f_u_out, lpre, lpost = cl.trainUser(f_u, f_is, out)
+		if step % 10 == 0:
+			debug = True
+		else:
+			debug = False
+		f_u_out, lpre, lpost = cl.trainUser(f_u, f_is, out, debug)
 		us.setUserFu(uid, f_u_out) 
 		llpre = llpre + lpre
 		llpost = llpost + lpost
