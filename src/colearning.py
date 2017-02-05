@@ -6,25 +6,28 @@ import collections
 import json
 import sets
 
-USER_DIM=1
-ITEM_DIM=1
-HIDDEN = 3
-ETA = 0.1
+USER_DIM = 8
+ITEM_DIM = 8
+HIDDEN = 8
+ETA = 0.01
+ETA_W = 0.005
 NOISE = 0.01
-STEPS_MINI_OPT = 500
-STEPS_MINI_OPT_W = 50
-RESTRICT_ITEMS_PER_USER = 0
-RESTRICT_USERS_PER_ITEM = 0
-#RESTRICT_ITEMS_PER_USER = 15
-#RESTRICT_USERS_PER_ITEM = 30
+STEPS_MINI_OPT = 50
+#STEPS_MINI_OPT = 10
+STEPS_MINI_OPT_W = 10
+#RESTRICT_ITEMS_PER_USER = 0
+#RESTRICT_USERS_PER_ITEM = 0
+RESTRICT_ITEMS_PER_USER = 15
+RESTRICT_USERS_PER_ITEM = 30
 
 class Colearner:
-	def __init__(self, sess, user_dim, item_dim, hidden_units, eta, steps_mini_opt, steps_mini_opt_w, noise):
+	def __init__(self, sess, user_dim, item_dim, hidden_units, eta, eta_w, steps_mini_opt, steps_mini_opt_w, noise):
 		self.sess = sess
 		self.user_dim = user_dim
 		self.item_dim = item_dim
 		self.hidden_units = hidden_units
 		self.eta = eta
+		self.eta_w = eta_w
 		self.steps_mini_opt = steps_mini_opt
 		self.steps_mini_opt_w = steps_mini_opt_w
 		self.noise = noise
@@ -36,7 +39,7 @@ class Colearner:
 
 		self.user_grad = tf.reduce_mean(tf.gradients(self.loss, self.f_u), 1)
 		self.item_grad = tf.reduce_mean(tf.gradients(self.loss, self.f_i), 1)
-		self.w_grad_optimizer = tf.train.GradientDescentOptimizer(eta).minimize(self.loss)
+		self.w_grad_optimizer = tf.train.GradientDescentOptimizer(eta_w).minimize(self.loss)
 
 		self.sess.run(tf.initialize_all_variables())
 
@@ -60,6 +63,29 @@ class Colearner:
 			b_o = tf.Variable(tf.truncated_normal([1], 0, 1e-02))
 
 			self.out = tf.tanh(tf.matmul(self.hidden, W_o) + b_o)
+
+	def trainItemProb(self, f_i, f_us, out):
+		lpre=self.sess.run(self.loss, feed_dict = {
+			self.f_i: f_i, self.f_u: f_us, self.labels: out})
+
+		for n in range(self.steps_mini_opt):
+			if n % 10:
+				print n
+			curr_f_i = f_i
+
+			grad_f_i = self.sess.run(self.item_grad, feed_dict = {
+				self.f_i: curr_f_i, self.f_u: f_us, self.labels: out})
+			curr_f_i = curr_f_i - self.eta * grad_f_i
+
+		lpost=self.sess.run(self.loss, feed_dict = {
+			self.f_i: curr_f_i, self.f_u: f_us, self.labels: out})
+
+		return curr_f_i, lpre, lpost
+
+	def getAffinity(self, f_us, f_is):
+		out = self.sess.run(self.out, feed_dict = {
+			self.f_i: f_is, self.f_u: f_us})
+		return out
 
 	def trainItem(self, f_i, f_us, out): 
 		if np.random.uniform(0, 1) < self.noise:
@@ -156,6 +182,28 @@ class UserItemStore:
 			if n == 0:
 				break
 
+	def evalSet(self, fileglob):
+		files = glob.glob(fileglob)
+		f_us = []
+		f_is = []
+		for file in files:
+			f = open(file, 'r')
+			for line in f:
+				e = line.rstrip().split(",")
+				if len(e) != 2:
+					print "bad format: %s" % line
+					continue
+				user, item = e
+				if user not in self.users:
+					continue
+				if item not in self.items:
+					continue
+				f_us.append(self.users[user].f_u)
+				f_is.append(self.items[item].f_i)
+
+		return (np.asmatrix(np.asarray(f_us)), np.asmatrix(np.asarray(f_is)))
+
+
 	def loadData(self, fileglob):
 		files = glob.glob(fileglob)
 		print files
@@ -189,7 +237,14 @@ class UserItemStore:
 		print 'users: %d' % len(self.users)
 		print 'items: %d ' % len(self.items)
 
+	def lookupItem(self, id):
+		return self.items[id].f_i
+
+	def lookupUser(self, id):
+		return self.users[id].f_u
+		
 	def restrictData(self, N_users, N_items):
+		# uset, iset: users/items with large amounts of items/users.
 		uset = sets.Set()
 		for id, u in self.users.iteritems():
 			if len(u.items) > N_items:
@@ -220,6 +275,7 @@ class UserItemStore:
 		print 'items: %d ' % len(self.items)
 
 
+	# iterate over users and return matrix of items/non-items and labels
 	def getUsersItems(self):
 		for _, u in self.users.iteritems():
 			n_items = len(u.items)
@@ -239,6 +295,7 @@ class UserItemStore:
 				o[n_items + i, 0] = -1.0
 			yield (u.id, u.f_u, d, o)
 
+	# iterate over items and return matrix of users/non-users and labels
 	def getItemsUsers(self):
 		for _, i in self.items.iteritems():
 			n_users = len(i.users)
@@ -338,11 +395,13 @@ class UserItemStore:
 json_filename = "dump.json"
 
 #us = UserItemStore("/home/ubuntu/data/part*", USER_DIM, ITEM_DIM, RESTRICT_USERS_PER_ITEM, RESTRICT_ITEMS_PER_USER)
-us = UserItemStore("testdata/*", USER_DIM, ITEM_DIM, RESTRICT_USERS_PER_ITEM, RESTRICT_ITEMS_PER_USER)
+us = UserItemStore("../../data/part-000[0-8]*", USER_DIM, ITEM_DIM, RESTRICT_USERS_PER_ITEM, RESTRICT_ITEMS_PER_USER)
+#us = UserItemStore("testdata/*", USER_DIM, ITEM_DIM, RESTRICT_USERS_PER_ITEM, RESTRICT_ITEMS_PER_USER)
 us.showSomeUsers()
 
+
 sess = tf.InteractiveSession()
-cl = Colearner(sess, USER_DIM, ITEM_DIM, HIDDEN, ETA, STEPS_MINI_OPT, STEPS_MINI_OPT_W, NOISE)
+cl = Colearner(sess, USER_DIM, ITEM_DIM, HIDDEN, ETA, ETA_W, STEPS_MINI_OPT, STEPS_MINI_OPT_W, NOISE)
 
 def exportJson(json_filename, j, step):
 	j["meta"] = {
@@ -376,7 +435,7 @@ for step in range(1000000):
 	n = 0
 	for uid, f_u, f_is, out in us.getUsersItems():
 		if step % 10 == 0:
-			debug = True
+			debug = False
 		else:
 			debug = False
 		f_u_out, lpre, lpost = cl.trainUser(f_u, f_is, out, debug)
@@ -388,8 +447,15 @@ for step in range(1000000):
 	j = us.exportAsDict()
 	exportJson(json_filename, j, step+1)
 	
-	f_us, f_is, o = us.getItemsUsersBatch()
-	lpre, lpost = cl.trainW(f_us, f_is, o)
-	print "W %d: pre: %f, post: %f" % (step, lpre, lpost)
+#	f_us, f_is, o = us.getItemsUsersBatch()
+#	lpre, lpost = cl.trainW(f_us, f_is, o)
+#	print "W %d: pre: %f, post: %f" % (step, lpre, lpost)
 
-
+	fu_eval, fi_eval = us.evalSet("../../data/part-0000[0-3]")
+	out = cl.getAffinity(fu_eval, fi_eval)
+	out2 = cl.getAffinity(fu_eval, np.random.permutation(fi_eval))
+	print "Training: on %f, roll %f" % (np.mean(out), np.mean(out2))
+	fu_eval, fi_eval = us.evalSet("../../data/part-0009[0-3]")
+	out = cl.getAffinity(fu_eval, fi_eval)
+	out2 = cl.getAffinity(fu_eval, np.random.permutation(fi_eval))
+	print "Eval: on %f, roll %f" % (np.mean(out), np.mean(out2))
