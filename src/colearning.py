@@ -10,12 +10,12 @@ import uuid
 USER_DIM = 8
 ITEM_DIM = 8
 HIDDEN = 8
-ETA = 0.02
-ETA_W = 0.005
+ETA = 0.05
+ETA_W = 0.01
 NOISE = 0.01
 STEPS_MINI_OPT = 50
 #STEPS_MINI_OPT = 10
-STEPS_MINI_OPT_W = 10
+STEPS_MINI_OPT_W = 100
 #RESTRICT_ITEMS_PER_USER = 0
 #RESTRICT_USERS_PER_ITEM = 0
 RESTRICT_ITEMS_PER_USER = 15
@@ -293,7 +293,7 @@ class UserItemStore:
 	def getUsersItems(self):
 		for _, u in self.users.iteritems():
 			n_items = len(u.items)
-			n_neg = n_items / 2
+			n_neg = n_items
 			d = np.zeros([n_items + n_neg, self.item_dim])
 			o = np.ones([n_items + n_neg, 1])
 			for i,item in enumerate(u.items):
@@ -313,7 +313,7 @@ class UserItemStore:
 	def getItemsUsers(self):
 		for _, i in self.items.iteritems():
 			n_users = len(i.users)
-			n_neg = n_users / 2
+			n_neg = n_users
 			d = np.zeros([n_users + n_neg, self.user_dim])
 			o = np.ones([n_users + n_neg, 1])
 			for j,user in enumerate(i.users):
