@@ -5,11 +5,12 @@ import glob
 import collections
 import json
 import sets
+import uuid
 
 USER_DIM = 8
 ITEM_DIM = 8
 HIDDEN = 8
-ETA = 0.01
+ETA = 0.02
 ETA_W = 0.005
 NOISE = 0.01
 STEPS_MINI_OPT = 50
@@ -21,7 +22,8 @@ RESTRICT_ITEMS_PER_USER = 15
 RESTRICT_USERS_PER_ITEM = 30
 
 class Colearner:
-	def __init__(self, sess, user_dim, item_dim, hidden_units, eta, eta_w, steps_mini_opt, steps_mini_opt_w, noise):
+	def __init__(self, model_name, sess, user_dim, item_dim, hidden_units, eta, eta_w, steps_mini_opt, steps_mini_opt_w, noise):
+		self.model_name = model_name
 		self.sess = sess
 		self.user_dim = user_dim
 		self.item_dim = item_dim
@@ -42,6 +44,11 @@ class Colearner:
 		self.w_grad_optimizer = tf.train.GradientDescentOptimizer(eta_w).minimize(self.loss)
 
 		self.sess.run(tf.initialize_all_variables())
+		self.saver = tf.train.Saver()
+
+	def dumpModel(self):
+		self.saver.save(self.sess, "%s.ckpt" % self.model_name)
+			
 
 	def buildNetwork(self):
 		with tf.name_scope("JointUserItemP") as scope:
@@ -86,6 +93,13 @@ class Colearner:
 		out = self.sess.run(self.out, feed_dict = {
 			self.f_i: f_is, self.f_u: f_us})
 		return out
+
+	def getTopN(self, f_u, f_is, N):
+		out = self.sess.run(self.out, feed_dict = {
+			self.f_i: f_is, self.f_u: f_u})
+		sort_idx = sorted(enumerate(out), key=lambda x:-x[1])
+		return sort_idx[0:N-1]
+
 
 	def trainItem(self, f_i, f_us, out): 
 		if np.random.uniform(0, 1) < self.noise:
@@ -339,6 +353,23 @@ class UserItemStore:
 
 		return f_us, f_is, o
 
+	def getAllItems(self):
+		ids = []
+		f_is = []
+		for id,item in self.items.iteritems():
+			ids.append(id)
+			f_is.append(item.f_i)
+		return (ids, np.asmatrix(np.asarray(f_is)))
+
+	def getAllUsers(self):
+		ids = []
+		f_us = []
+		for id,user in self.users.iteritems():
+			ids.append(id)
+			f_us.append(user.f_u)
+		return (ids, np.asmatrix(np.asarray(f_us)))
+
+
 	def getUser(self, id):
 		return self.users[id]
 
@@ -392,16 +423,19 @@ class UserItemStore:
 		}
 		return j
 
-json_filename = "dump.json"
 
 #us = UserItemStore("/home/ubuntu/data/part*", USER_DIM, ITEM_DIM, RESTRICT_USERS_PER_ITEM, RESTRICT_ITEMS_PER_USER)
 us = UserItemStore("../../data/part-000[0-8]*", USER_DIM, ITEM_DIM, RESTRICT_USERS_PER_ITEM, RESTRICT_ITEMS_PER_USER)
 #us = UserItemStore("testdata/*", USER_DIM, ITEM_DIM, RESTRICT_USERS_PER_ITEM, RESTRICT_ITEMS_PER_USER)
 us.showSomeUsers()
 
+model_name = uuid.uuid1()
+json_filename = "%s.json" % model_name
+
+print "Model name: %s" % model_name
 
 sess = tf.InteractiveSession()
-cl = Colearner(sess, USER_DIM, ITEM_DIM, HIDDEN, ETA, ETA_W, STEPS_MINI_OPT, STEPS_MINI_OPT_W, NOISE)
+cl = Colearner(model_name, sess, USER_DIM, ITEM_DIM, HIDDEN, ETA, ETA_W, STEPS_MINI_OPT, STEPS_MINI_OPT_W, NOISE)
 
 def exportJson(json_filename, j, step):
 	j["meta"] = {
@@ -409,7 +443,10 @@ def exportJson(json_filename, j, step):
 		"item_dim": ITEM_DIM,
 		"hidden": HIDDEN,
 		"eta": ETA,
+		"eta_W": ETA_W,
 		"steps_mini_opt": STEPS_MINI_OPT,
+		"steps_mini_opt_w": STEPS_MINI_OPT_W,
+		"noise": NOISE,
 		"step": step
 	}
 	f = open(json_filename, 'w')
@@ -419,7 +456,19 @@ def exportJson(json_filename, j, step):
 j = us.exportAsDict()
 exportJson(json_filename, j, 0)
 
+(users,f_us) = us.getAllUsers()
+users = np.random.permutation(users)
+
 for step in range(1000000):
+	(items,f_is) = us.getAllItems()
+
+	for i in range(5):
+		user = us.getUser(users[i])
+		print user
+		topN = cl.getTopN(user.f_u, f_is, 40)
+		topItems = [(items[i],s) for i,s in topN]
+		print ",".join(("%f: %s" % (s,id) for id, s in topItems))
+	
 	llpre = 0
 	llpost = 0
 	n = 0
@@ -445,11 +494,10 @@ for step in range(1000000):
 		n += 1
 	print "Users %d: pre: %f, post: %f" % (step, llpre / n, llpost / n)
 	j = us.exportAsDict()
-	exportJson(json_filename, j, step+1)
 	
-#	f_us, f_is, o = us.getItemsUsersBatch()
-#	lpre, lpost = cl.trainW(f_us, f_is, o)
-#	print "W %d: pre: %f, post: %f" % (step, lpre, lpost)
+	f_us, f_is, o = us.getItemsUsersBatch()
+	lpre, lpost = cl.trainW(f_us, f_is, o)
+	print "W %d: pre: %f, post: %f" % (step, lpre, lpost)
 
 	fu_eval, fi_eval = us.evalSet("../../data/part-0000[0-3]")
 	out = cl.getAffinity(fu_eval, fi_eval)
@@ -459,3 +507,7 @@ for step in range(1000000):
 	out = cl.getAffinity(fu_eval, fi_eval)
 	out2 = cl.getAffinity(fu_eval, np.random.permutation(fi_eval))
 	print "Eval: on %f, roll %f" % (np.mean(out), np.mean(out2))
+
+	exportJson(json_filename, j, step+1)
+	cl.dumpModel()
+
